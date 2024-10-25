@@ -1,0 +1,10 @@
+pyproject.toml
+setup.cfg
+src/napari_whole_brain_map/__init__.py
+src/napari_whole_brain_map/napari.yaml
+src/napari_whole_brain_map.egg-info/PKG-INFO
+src/napari_whole_brain_map.egg-info/SOURCES.txt
+src/napari_whole_brain_map.egg-info/dependency_links.txt
+src/napari_whole_brain_map.egg-info/entry_points.txt
+src/napari_whole_brain_map.egg-info/requires.txt
+src/napari_whole_brain_map.egg-info/top_level.txt

@@ -1,0 +1,34 @@
+Metadata-Version: 2.1
+Name: napari-whole-brain-map
+Version: 0.0.1
+Classifier: Development Status :: 2 - Pre-Alpha
+Classifier: Framework :: napari
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Image Processing
+Requires-Dist: numpy>=1.18
+Requires-Dist: torch
+Requires-Dist: qtpy
+Requires-Dist: nibabel
+Requires-Dist: multiview-stitcher[aicsimageio]==0.1.14
+Requires-Dist: spatial_image==0.3.0
+Requires-Dist: multiscale_spatial_image==0.11.2
+Provides-Extra: testing-no-gui
+Requires-Dist: tox; extra == "testing-no-gui"
+Requires-Dist: pytest; extra == "testing-no-gui"
+Requires-Dist: pytest-cov; extra == "testing-no-gui"
+Requires-Dist: pytest-qt; extra == "testing-no-gui"
+Provides-Extra: testing
+Requires-Dist: tox; extra == "testing"
+Requires-Dist: pytest; extra == "testing"
+Requires-Dist: pytest-cov; extra == "testing"
+Requires-Dist: pytest-qt; extra == "testing"
+Requires-Dist: napari; extra == "testing"
+Requires-Dist: pyqt5; extra == "testing"

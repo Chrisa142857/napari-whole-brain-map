@@ -1,0 +1,2 @@
+[napari.manifest]
+napari-whole-brain-map = napari_whole_brain_map:napari.yaml
