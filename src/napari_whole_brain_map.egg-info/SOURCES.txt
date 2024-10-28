@@ -1,6 +1,8 @@
 pyproject.toml
 setup.cfg
 src/napari_whole_brain_map/__init__.py
+src/napari_whole_brain_map/_brainmap_widget.py
+src/napari_whole_brain_map/_utils.py
 src/napari_whole_brain_map/napari.yaml
 src/napari_whole_brain_map.egg-info/PKG-INFO
 src/napari_whole_brain_map.egg-info/SOURCES.txt
