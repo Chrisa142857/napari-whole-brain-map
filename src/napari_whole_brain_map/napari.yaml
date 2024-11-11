@@ -15,9 +15,6 @@ contributions:
     - id: napari-whole-brain-map.make_brainmap_widget
       python_name: napari_whole_brain_map._brainmap_widget:BrainmapQWidget
       title: Make Brainmap QWidget
-    # - id: napari-whole-brain-map.make_mosaic
-    #   python_name: napari_whole_brain_map._mosaic_widget:MosaicQWidget
-    #   title: Make Stitcher Mosaic
   widgets:
     - command: napari-whole-brain-map.say_hi  # note, same as command.id above
       display_name: Hello World

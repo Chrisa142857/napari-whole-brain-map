@@ -21,18 +21,11 @@ from magicgui import widgets
 from qtpy.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QTabWidget, QLabel, QFileDialog
 # from qtpy.QtGui import QPixmap
 import xml.etree.ElementTree as ET 
-# import multiscale_spatial_image as msi
-# from spatial_image import to_spatial_image
-# from multiview_stitcher import mv_graph, spatial_image_utils, msi_utils, param_utils, fusion
-import xarray as xr
+# import xarray as xr
 # import dask.array as da
-# from napari_whole_brain_map import multiview_stitcher_utils
-# from napari_whole_brain_map.multiview_stitcher_utils import image_layer_to_msim
 # from napari.layers import Image, Labels
-
-# from napari_stitcher import _reader, multiview_stitcher_utils, _utils
-
-from pathlib import Path
+# from napari_stitcher import _reader
+# from pathlib import Path
 
 from napari_whole_brain_map import _utils
 if TYPE_CHECKING:
