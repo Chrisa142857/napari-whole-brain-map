@@ -21,18 +21,11 @@ from magicgui import widgets
 from qtpy.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QTabWidget, QLabel, QFileDialog
 # from qtpy.QtGui import QPixmap
 import xml.etree.ElementTree as ET 
-# import multiscale_spatial_image as msi
-# from spatial_image import to_spatial_image
-# from multiview_stitcher import mv_graph, spatial_image_utils, msi_utils, param_utils, fusion
-import xarray as xr
+# import xarray as xr
 # import dask.array as da
-# from napari_whole_brain_map import multiview_stitcher_utils
-# from napari_whole_brain_map.multiview_stitcher_utils import image_layer_to_msim
 # from napari.layers import Image, Labels
-
-# from napari_stitcher import _reader, multiview_stitcher_utils, _utils
-
-from pathlib import Path
+# from napari_stitcher import _reader
+# from pathlib import Path
 
 from napari_whole_brain_map import _utils
 if TYPE_CHECKING:
@@ -180,6 +173,8 @@ class BrainmapQWidget(QWidget):
 
     def arrange_brainmap_layer(self):
         xmlfile_root = f'/cajal/Felix/Lightsheet/stitching/Manual_aligned_{self.btag}'
+        if self.btag == 'L57D855P5':
+            xmlfile_root = '/cajal/ACMUSERS/ziquanw/Lightsheet/imaris_stitch/Manual_aligned_L57D855P5'
         stitch_path = '/'.join(self.cprof_root.split('/')[:-1]) + '/' + self.btag
         stitch_path = stitch_path.replace('results', 'stitch_by_ptreg').replace('P4/', '')
         overlap_r = 0.4#self.overlap.value
@@ -242,15 +237,16 @@ class BrainmapQWidget(QWidget):
                 if 'Manual' not in self.raw_stitched: self.raw_stitched['Manual'] = {}
                 if 'N/A' not in self.raw_stitched: self.raw_stitched['N/A'] = {}
                 if d not in self.raw_stitched['N/A']: self.raw_stitched['N/A'][d] = self.raw[d]
+                xshape = ((self.seg_shape[d][1]*(1-0.2)) * self.ncol.value + 0.2*self.seg_shape[d][1])*self.org_res_y_textbox.value
+                yshape = ((self.seg_shape[d][2]*(1-0.2)) * self.nrow.value + 0.2*self.seg_shape[d][2])*self.org_res_x_textbox.value
                 if d not in self.raw_stitched['Manual']:
                     center, _, _, nis, nis_label = self.raw_stitched['N/A'][d]
-                    xshape = self.seg_shape[d][1] * self.ncol.value
                     ct_z = center[:, 0].clone().long()
                     nis_z = (nis[:, 0] + nis[:, 3]) / 2
                     new_nis = []
                     new_nis_label = []
                 
-                tz, tile_lt_x, tile_lt_y = None, None, None
+                tz = []
                 for fn in os.listdir(xmlfile_root):
                     if not fn.endswith('.xml'): continue
                     xmlfile = f'{xmlfile_root}/{fn}'
@@ -261,28 +257,47 @@ class BrainmapQWidget(QWidget):
                             zsplit, ims_fn = item['Filename'].split('\\')[-2:]
                             zmin = int(zsplit.split('-')[0][1:])
                             zmax = int(zsplit.split('-')[1][1:])
-                            if d in ims_fn:
-                                minz, miny, minx = get_minxyz(tree, item, xshape)
+                            if d.lower() in ims_fn.lower():
+                                minz, miny, minx = get_minxyz(tree, item, xshape, yshape)
+                                tz.append(minz)
+                                break
+                print("list of zmin", tz)
+                tz, tile_lt_x, tile_lt_y = np.mean(tz).item(), None, None
+                for fn in os.listdir(xmlfile_root):
+                    if not fn.endswith('.xml'): continue
+                    xmlfile = f'{xmlfile_root}/{fn}'
+                    tree = ET.parse(xmlfile) 
+                    for i in range(len(tree.getroot()[0])):
+                        if tree.getroot()[0][i].tag == 'Image':
+                            item = tree.getroot()[0][i].attrib
+                            zsplit, ims_fn = item['Filename'].split('\\')[-2:]
+                            zmin = int(zsplit.split('-')[0][1:])
+                            zmax = int(zsplit.split('-')[1][1:])
+                            if d.lower() in ims_fn.lower():
+                                minz, miny, minx = get_minxyz(tree, item, xshape, yshape)
+                                print(d, zsplit, ims_fn, [minz, miny, minx], )
                                 if d not in self.cache_tform:
                                     self.cache_tform[d] = [miny/self.org_res_y_textbox.value, minx/self.org_res_x_textbox.value]
                                 else:
                                     self.cache_tform[d] = [min(miny/self.org_res_y_textbox.value, self.cache_tform[d][0]), min(minx/self.org_res_x_textbox.value, self.cache_tform[d][1])]
                                 if tile_lt_x is None:
-                                    tz, tile_lt_x, tile_lt_y = minz, miny, minx
+                                    # tz, tile_lt_x, tile_lt_y = minz, miny, minx
+                                    tile_lt_x, tile_lt_y = miny, minx
                                 elif d not in self.raw_stitched['Manual']:
                                     ct_zmask = torch.where(torch.logical_and(ct_z >= zmin, ct_z < zmax))[0]
                                     if len(ct_zmask) > 0:
-                                        center[ct_zmask, 0] = center[ct_zmask, 0] + (minz-tz)
+                                        # center[ct_zmask, 0] = center[ct_zmask, 0] + (minz-tz)
                                         center[ct_zmask, 1] = center[ct_zmask, 1] + (miny-tile_lt_x)
                                         center[ct_zmask, 2] = center[ct_zmask, 2] + (minx-tile_lt_y)
                                 if d not in self.raw_stitched['Manual']:
                                     nis_zmask = torch.where(torch.logical_and(nis_z >= zmin, nis_z < zmax))[0]
                                     if len(nis_zmask) > 0:
-                                        print("before trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0])
-                                        nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + minz/self.org_res_z_textbox.value
+                                        # print("before trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0])
+                                        # nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + minz/self.org_res_z_textbox.value
+                                        nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + tz/self.org_res_z_textbox.value
                                         nis[nis_zmask, 1::3] = nis[nis_zmask, 1::3] + miny/self.org_res_y_textbox.value
                                         nis[nis_zmask, 2::3] = nis[nis_zmask, 2::3] + minx/self.org_res_x_textbox.value
-                                        print("after trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0], [minz, miny, minx])
+                                        # print("after trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0], [minz, miny, minx])
                                         new_nis.append(nis[nis_zmask])
                                         new_nis_label.append(nis_label[nis_zmask])
 
@@ -373,8 +388,8 @@ class BrainmapQWidget(QWidget):
 
 
     def load_cell_profile_raw(self):
-        lrange = 1000
         zratio = 2.5/4
+        self.zstitch_remap = {}
         with _utils.TqdmCallback(tqdm_class=_utils.progress,
                         desc='Loading raw cell profile', bar_format=" "):
             for choicei in range(len(self.tile_selection.current_choice)):
@@ -412,37 +427,13 @@ class BrainmapQWidget(QWidget):
                 zstitch_remap_fn = f"{cprof_d}/{self.btag}_remap.zip"
                 if os.path.exists(zstitch_remap_fn):
                     zstitch_remap = torch.load(zstitch_remap_fn).to(self.device)
+                    self.zstitch_remap[d] = zstitch_remap
                     print("before remove z-stitched pt", pt.shape, label.shape)
-                    ## loc: gnn stitch source (current tile) nis index, stitch_remap_loc: index of pairs in the stitch remap list
-                    loc, stitch_remap_loc = [], []
-                    for lrangei in range(0, len(label), lrange):
-                        lo, stitch_remap_lo = torch.where(label[lrangei:lrangei+lrange, None] == zstitch_remap[0, None, :])
-                        loc.append(lo+lrangei)
-                        stitch_remap_loc.append(stitch_remap_lo)
-                    loc, stitch_remap_loc = torch.cat(loc), torch.cat(stitch_remap_loc)
-
-                    ## pre_loc: gnn stitch target (previous tile) nis index, tloc: index of remaining Z stitch pairs after nis being removed by X-Y stitching
-                    pre_loc, tloc = [], []
-                    for lrangei in range(0, len(label), lrange):
-                        pre_lo, tlo = torch.where(label[lrangei:lrangei+lrange, None] == zstitch_remap[1, None, stitch_remap_loc])
-                        pre_loc.append(pre_lo+lrangei)
-                        tloc.append(tlo)
-                    pre_loc, tloc = torch.cat(pre_loc), torch.cat(tloc)
-
-                    ## source nis is removed from keeping mask
-                    keep_mask = torch.ones(len(pt), device=self.device).bool()
-                    keep_mask[loc] = False
-                #     keep_masks[stack_name][f'{i}-{j}'] = torch.logical_and(keep_masks[stack_name][f'{i}-{j}'], keep_mask)
-
-                    # merge stitched source nis to target nis
-                    loc = loc[tloc]
-                    pt[pre_loc] = (pt[loc] + pt[pre_loc]) / 2
-                    vol[pre_loc] = vol[loc] + vol[pre_loc]
-
-                    pt = pt[keep_mask]
-                    vol = vol[keep_mask]
-                    pt_label = label[keep_mask]
-                    print("after remove z-stitched pt", pt.shape, label.shape)
+                    pt, pt_label, vol = do_zstitch(zstitch_remap, pt, label, vol=vol)
+                    print("after remove z-stitched pt", pt.shape, pt_label.shape)
+                else:
+                    self.zstitch_remap[d] =  None
+                    pt_label = label
                     
                 self.raw[d] = [pt, pt_label, vol, bbox.float(), label]
                 self.select_list_status.choices = [f'cell #: {format_number(len(self.raw[update_d][0]))}' if update_d in self.raw else f'Not loaded' for update_d in self.tile_list]
@@ -553,31 +544,41 @@ class BrainmapQWidget(QWidget):
         stack_nis = {k: self.raw[k][-2].detach().cpu() for k in self.raw}
         stack_label = {k: self.raw[k][-1].detach().cpu() for k in self.raw}
         tile_center = {k: [self.seg_shape[k][1]//2, self.seg_shape[k][2]//2] for k in self.image_layer_bbox}
-        self.doubled_label = nms_undouble_cell(stack_nis, stack_label, tile_center, self.seg_shape, tile_lt_loc=self.cache_tform, overlap_r=0.2, btag=self.btag, device=self.device, save_path='./tmp')
+        self.doubled_label = nms_undouble_cell(stack_nis, stack_label, tile_center, self.seg_shape, tile_wh=self.seg_shape, tile_lt_loc=self.cache_tform, overlap_r=0.2, btag=self.btag, device=self.device, save_path='./tmp')
         lrange = 1000
         undoubled_center = []
         undoubled_label = []
         undoubled_vol = []
         for k in self.doubled_label:
+        #########################
             # pt, label, vol = self.raw[k][:3]
-            pt = stack_nis[k].to(self.device)
+        #########################
+            pt = stack_nis[k].clone().to(self.device)
             pt = (pt[:, :3] + pt[:, 3:]) / 2
-            label = stack_label[k].to(self.device)
+            label = stack_label[k].clone().to(self.device)
+        #########################
             print("before remove doubled pt", self.raw[k][-2].shape, label.shape)
             keep_ind = []
             for labeli in range(0, len(label), lrange):
                 label_batch = label[labeli:labeli+lrange]
                 label2rm = label_batch[:, None] == self.doubled_label[k][None, :].to(self.device)
                 do_rm = label2rm.any(1)
-    #                         rm_label[f'{i}-{j}'] = rm_label[f'{i}-{j}'][torch.logical_not(label2rm.any(0))]
                 keep_ind.append(torch.arange(labeli, labeli+len(label_batch), device=self.device)[torch.logical_not(do_rm)])
             if len(label) > 0:
                 keep_ind = torch.cat(keep_ind)
                 pt = pt[keep_ind]
+        #########################
                 # vol = vol[keep_ind]
+        #########################
                 label = label[keep_ind]
+        #########################
                 # self.raw[k] = [pt, label, vol, self.raw[k][-2], self.raw[k][-1]]
                 # self.update_brainmap_layer(k)
+        #########################
+            zstitch_remap = self.zstitch_remap[k]
+            if zstitch_remap is not None:
+                pt, label, _ = do_zstitch(zstitch_remap, pt, label)
+
             undoubled_center.append(pt)
             undoubled_label.append(label)
             # undoubled_vol.append(vol)
@@ -594,42 +595,6 @@ class BrainmapQWidget(QWidget):
         bbox_origin_zero = bbox_origin_zero - bbox_origin_zero.min()
         dshape = bbox_origin_zero[:, 3:].max(0) + 2
         fused_image = self.get_brainmap(undoubled_center, undoubled_vol, dshape).detach().cpu().numpy()
-        #########################
-        # bbox = list(self.image_layer_bbox.values())
-        # lnames = list(self.image_layer_bbox.keys())
-        # bbox = np.stack(bbox)
-        # bbox_origin_zero = np.round(bbox.copy()).astype(np.int32)
-        # bbox_origin_zero = bbox_origin_zero - bbox_origin_zero.min()
-        # fused_image = np.zeros(bbox_origin_zero[:, 3:].max(0) + 2)
-
-        # for i in range(len(lnames)):
-        #     lname = lnames[i]
-        #     data = self.brainmap_cache[lname]
-        #     for overlap in self.brainmap_overlap_mask[lname]:
-        #         tl, br = overlap[:3], overlap[3:]
-        #         # tl[1:] = tl[1:] + 1
-        #         print(tl, br, data.shape)
-        #         data[tl[0]:br[0], tl[1]:br[1], tl[2]:br[2]] = data[tl[0]:br[0], tl[1]:br[1], tl[2]:br[2]] / 2
-
-        #     xs, ys, zs, xe, ye, ze = bbox_origin_zero[i]
-        #     fused_image[xs:xe, ys:ye, zs:ze] = fused_image[xs:xe, ys:ye, zs:ze] + data
-
-        # ## Get overlap area each image layers
-        # N = len(bbox)
-        # top_left = np.maximum(bbox[:, None, :3], bbox[None, :, :3]) # N x 1 x 3, 1 x N x 3 -> N x N x 3
-        # bottom_right = np.minimum(bbox[:, None, 3:], bbox[None, :, 3:])
-        # overlap = (bottom_right > top_left).all(-1)
-        # for i in range(N):
-        #     lname = lnames[i]
-        #     data = self.brainmap_layers[self.brainmap_layernames.index(lname)].data[0].copy()
-        #     overlap_index = np.where(overlap[i])[0]
-        #     for oi in overlap_index:
-        #         tl = np.round(top_left[i, oi] - bbox[i][:3]).astype(np.int32) + 1
-        #         br = np.round(bottom_right[i, oi] - bbox[i][:3]).astype(np.int32) - 1
-        #         data[tl[0]:br[0], tl[1]:br[1], tl[2]:br[2]] = data[tl[0]:br[0], tl[1]:br[1], tl[2]:br[2]] / 2
-
-        #     xs, ys, zs, xe, ye, ze = bbox_origin_zero[i]
-        #     fused_image[xs:xe, ys:ye, zs:ze] = fused_image[xs:xe, ys:ye, zs:ze] + data
 
         ################
         fused_name = f"fused:{self.maptype_dropdown.current_choice.replace(' ', '-')}"
@@ -666,7 +631,42 @@ class BrainmapQWidget(QWidget):
         # print(D, H, W, z, y, x, ratio)
         return np.array([z, y, x, z+D, y+H, x+W])
 
-def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, overlap_r, btag, save_path, tile_lt_loc, device='cuda:1'):
+def do_zstitch(zstitch_remap, pt, label, vol=None):
+    lrange = 1000
+    ## loc: gnn stitch source (current tile) nis index, stitch_remap_loc: index of pairs in the stitch remap list
+    loc, stitch_remap_loc = [], []
+    for lrangei in range(0, len(label), lrange):
+        lo, stitch_remap_lo = torch.where(label[lrangei:lrangei+lrange, None] == zstitch_remap[0, None, :])
+        loc.append(lo+lrangei)
+        stitch_remap_loc.append(stitch_remap_lo)
+    loc, stitch_remap_loc = torch.cat(loc), torch.cat(stitch_remap_loc)
+
+    ## pre_loc: gnn stitch target (previous tile) nis index, tloc: index of remaining Z stitch pairs after nis being removed by X-Y stitching
+    pre_loc, tloc = [], []
+    for lrangei in range(0, len(label), lrange):
+        pre_lo, tlo = torch.where(label[lrangei:lrangei+lrange, None] == zstitch_remap[1, None, stitch_remap_loc])
+        pre_loc.append(pre_lo+lrangei)
+        tloc.append(tlo)
+    pre_loc, tloc = torch.cat(pre_loc), torch.cat(tloc)
+
+    ## source nis is removed from keeping mask
+    keep_mask = torch.ones(len(pt)).bool()
+    keep_mask[loc] = False
+#     keep_masks[stack_name][f'{i}-{j}'] = torch.logical_and(keep_masks[stack_name][f'{i}-{j}'], keep_mask)
+
+    # merge stitched source nis to target nis
+    loc = loc[tloc]
+    pt[pre_loc] = (pt[loc] + pt[pre_loc]) / 2
+    if vol is not None:
+        vol[pre_loc] = vol[loc] + vol[pre_loc]
+
+    pt = pt[keep_mask]
+    if vol is not None:
+        vol = vol[keep_mask]
+    label = label[keep_mask]
+    return pt, label, vol
+
+def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, overlap_r, btag, save_path, tile_wh, tile_lt_loc, device='cuda:1'):
     '''
     NMS to remove doubled cells
     '''
@@ -674,22 +674,16 @@ def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, o
         return torch.load(f'{save_path}/doubled_NIS_label/{btag}_doubled_label_byNapari.zip')
     neighbor = [[-1, 0], [0, -1], [-1, -1], [1, 0], [0, 1], [1, 1], [1, -1], [-1, 1]]
     rm_label = {}
-    nms_margin = 0.05
-    nms_r = overlap_r + nms_margin
+    # nms_margin = 0.3
+    nms_r = 0.5 #overlap_r + nms_margin
     nms_computed = []
-    # if tform_stack_manual is None:
-    # tform_xy_max = [t*2 for t in tform_xy_max]
-    # for k in stack_nis_bbox:
-    #     tile_lt_loc[k] = [tile_lt_loc[k][0]-tform_xy_max[0], tile_lt_loc[k][1]-tform_xy_max[1]]
-    # seg_shape = {k: [seg_shape[k][0], seg_shape[k][1]/0.75, seg_shape[k][2]/0.75] for k in seg_shape}
     ncol = 4
     nrow = 5
-    # tile_lt_loc = {
-    #     k: [int(k.split(' x ')[0][8:10])*seg_shape[k][1]*(1-overlap_r)-seg_shape[k][1]*nms_margin, int(k.split(' x ')[1][:-1])*seg_shape[k][2]*(1-overlap_r)-seg_shape[k][2]*nms_margin] for k in seg_shape
-    # }
-    # print(tile_lt_loc, seg_shape)
-    # print([[k, stack_nis_bbox[k].shape] for k in stack_nis_bbox])
-    max_tile_wh = {k: stack_nis_bbox[k][:, 4:6].max(0)[0] - stack_nis_bbox[k][:, 1:3].min(0)[0] for k in stack_nis_bbox}
+    bbox_area_wh = {k: stack_nis_bbox[k][:, 4:6].max(0)[0] - stack_nis_bbox[k][:, 1:3].min(0)[0] for k in stack_nis_bbox}
+    max_tile_wh = {k: [max(tile_wh[k][1], bbox_area_wh[k][0]), max(tile_wh[k][2], bbox_area_wh[k][1])] for k in stack_nis_bbox}
+    # tile_lt_loc = {k: [tile_lt_loc[k][0] - max_tile_wh[k][0]*0.1, tile_lt_loc[k][1] - max_tile_wh[k][1]*0.1] for k in stack_nis_bbox}
+    print(max_tile_wh)
+    print(tile_lt_loc)
     for k in stack_nis_bbox:
     # for k in ['1-1']:
         torch.cuda.empty_cache()
@@ -748,7 +742,6 @@ def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, o
             # blabel_tgt = label_nei
             # bbox_mov = bbox_tile
             # blabel_mov = label_tile
-            # print(bbox_tgt.min(0)[0], bbox_tgt.max(0)[0], bbox_mov.min(0)[0], bbox_mov.max(0)[0])
             #########################
             ## minimal iou threshold
             print(datetime.now(), f"NMS between {i}-{j}, {i+pi}-{j+pj}", bbox_mov.shape, bbox_tgt.shape)
@@ -773,10 +766,13 @@ def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, o
 
             rm_mask_nei = torch.zeros(len(bbox_nei), device=bbox_nei.device, dtype=bool)
             rm_mask_tile = torch.zeros(len(bbox_tile), device=bbox_tile.device, dtype=bool)
-            # rm_mask_nei[tgt_mask[rm_ind_tgt]] = True
-            # rm_mask_tile[mov_mask[rm_ind_mov]] = True
-            rm_mask_nei[rm_ind_tgt] = True
-            rm_mask_tile[rm_ind_mov] = True
+            #####################################
+            rm_mask_nei[tgt_mask[rm_ind_tgt]] = True
+            rm_mask_tile[mov_mask[rm_ind_mov]] = True
+            #####################################
+            # rm_mask_nei[rm_ind_tgt] = True
+            # rm_mask_tile[rm_ind_mov] = True
+            #####################################
             bbox_tile = bbox_tile[torch.logical_not(rm_mask_tile)]
             label_tile = label_tile[torch.logical_not(rm_mask_tile)]
             stack_nis_bbox[f'UltraII[{i+pi:02d} x {j+pj:02d}]'] = stack_nis_bbox[f'UltraII[{i+pi:02d} x {j+pj:02d}]'][torch.logical_not(rm_mask_nei).cpu()]
@@ -896,22 +892,22 @@ def bbox_in_stitching_seam(bbox, lt_loc, wh, i, j, ncol, nrow, nms_r):
     # mask = [left, right, bottom, top]
     masks = [None, None, None, None]
     if i > 0:
-        # 0 ~ overlap_r
+        # 0 ~ nms_r
         mask = bbox[:, 1] < lt_loc[0] + wh[0]*(nms_r)
         masks[0] = mask
 
     if i < ncol-1:
-        # 1-overlap_r ~ 1
+        # 1-nms_r ~ 1
         mask = bbox[:, 4] > lt_loc[0] + wh[0]*(1-nms_r)
         masks[1] = mask
 
     if j > 0:
-        # 0 ~ overlap_r
+        # 0 ~ nms_r
         mask = bbox[:, 2] < lt_loc[1] + wh[1]*nms_r
         masks[2] = mask
 
     if j < nrow-1:
-        # 1-overlap_r ~ 1
+        # 1-nms_r ~ 1
         mask = bbox[:, 5] > lt_loc[1] + wh[1]*(1-nms_r)
         masks[3] = mask
 
@@ -949,8 +945,8 @@ def get_minxyz(tree, item, xshape=0, yshape=0):
     if tree.getroot().attrib['Direction'] == 'RightUp':
         return float(item['MinZ']), float(item['MinY']), float(item['MinX'])
     if tree.getroot().attrib['Direction'] == 'RightDown':
-        return float(item['MinZ']), xshape-float(item['MinY']), float(item['MinX'])
+        return float(item['MinZ']), yshape-float(item['MinY']), float(item['MinX'])
     if tree.getroot().attrib['Direction'] == 'LeftUp':
-        return float(item['MinZ']), float(item['MinY']), yshape-float(item['MinX'])
+        return float(item['MinZ']), float(item['MinY']), xshape-float(item['MinX'])
     if tree.getroot().attrib['Direction'] == 'LeftDown':
-        return float(item['MinZ']), xshape-float(item['MinY']), yshape-float(item['MinX'])
+        return float(item['MinZ']), yshape-float(item['MinY']), xshape-float(item['MinX'])

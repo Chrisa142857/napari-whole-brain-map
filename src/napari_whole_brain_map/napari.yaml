@@ -24,4 +24,4 @@ contributions:
   writers:
     - command: napari-whole-brain-map.write_multiple
       layer_types: ['image+']
-      filename_extensions: ['.nib.gz']
+      filename_extensions: ['.nii.gz']

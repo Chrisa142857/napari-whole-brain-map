@@ -13,15 +13,14 @@ import nibabel as nib
 
 import warnings
 from typing import TYPE_CHECKING, Any, List, Sequence, Tuple, Union
+# from napari.layers import MultiScaleData
 
-from multiview_stitcher import spatial_image_utils, io
-
-if TYPE_CHECKING:
-    DataType = Union[Any, Sequence[Any]]
-    FullLayerData = Tuple[DataType, dict, str]
+# if TYPE_CHECKING:
+#     DataType = Union[Any, Sequence[Any]]
+#     FullLayerData = Tuple[DataType, dict, str]
 
 
-def write_single_image(path: str, data: Any, meta: dict) -> List[str]:
+def write_single_image(path: str, data, meta: dict) -> List[str]:
     """Writes a single image layer"""
 
     # implement your writer logic here ...
@@ -35,7 +34,7 @@ def write_single_image(path: str, data: Any, meta: dict) -> List[str]:
     return [path]
 
 
-def write_multiple(path: str, data: List[FullLayerData]) -> List[str]:
+def write_multiple(path: str, data) -> List[str]:
     """
     Writes zarr backed dask arrays containing fused images.
     Ignores transform_keys.
@@ -43,7 +42,7 @@ def write_multiple(path: str, data: List[FullLayerData]) -> List[str]:
     """
 
     # implement your writer logic here ...
-    data = data[0][0]
+    data = data[0][0][0]
     if isinstance(data, torch.Tensor):
         data = data.numpy()
     assert isinstance(data, np.ndarray), "Support Numpy or Torch array"
