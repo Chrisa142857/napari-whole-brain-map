@@ -4,7 +4,7 @@ This is based on the results of instance segmentation pipeline in this [repo](ht
 
 ## TODO list
 
- - [x] Loading segmentation results
+ - [x] Load segmentation results
  - [x] Generate representation map of each individual stack
  - [ ] Apply automatic stitching program
  - [x] Apply Imaris stitcher results
