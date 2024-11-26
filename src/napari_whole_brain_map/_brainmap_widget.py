@@ -198,6 +198,11 @@ class BrainmapQWidget(QWidget):
                 if d not in self.raw_stitched['N/A']: self.raw_stitched['N/A'][d] = self.raw[d]
                 tz = 0
                 self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_x]
+                _, _, _, nis, _ = self.raw[d]
+                new_nis = nis.clone()
+                new_nis[:, 1::3] = nis[:, 1::3] + org_tile_lt_x
+                new_nis[:, 2::3] = nis[:, 2::3] + org_tile_lt_y
+                self.raw_stitched['N/A'][d] = [self.raw_stitched['N/A'][d][0], self.raw_stitched['N/A'][d][1], self.raw_stitched['N/A'][d][2], new_nis, self.raw_stitched['N/A'][d][-1]]
                     
             if self.stitchtype_dropdown.current_choice in ['Coarse', 'Refine']:
                 tform_stack_coarse = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_coarse.json', 'r', encoding='utf-8'))
@@ -209,7 +214,6 @@ class BrainmapQWidget(QWidget):
                 if 'Coarse' not in self.raw_stitched: self.raw_stitched['Coarse'] = {}
                 if d not in self.raw_stitched['Coarse']: self.raw_stitched['Coarse'][d] = self.raw[d]
                 self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_y]
-            
                 if self.stitchtype_dropdown.current_choice == 'Refine':
                     if 'Refine' not in self.raw_stitched: self.raw_stitched['Refine'] = {}
                     if d in self.raw_stitched['Refine']: continue
@@ -222,7 +226,7 @@ class BrainmapQWidget(QWidget):
                         tform_stack_ptreg = None
                         print(datetime.now(), "Loaded tform of coarse, refine")
                     # center = self.raw_stitched['Coarse'][d][0].clone()
-                    center, _, _, nis, nis_label = self.raw_stitched['Coarse'][d]
+                    center, _, _, nis, nis_label = self.raw[d]
                     ct_z = (center[:, 0].clone() + tz).long()
                     nis_z = (((nis[:, 0] + nis[:, 3]) / 2).clone() + tz).long()
                     new_nis = []
@@ -281,7 +285,7 @@ class BrainmapQWidget(QWidget):
                 xshape = ((self.seg_shape[d][1]*(1-0.2)) * self.ncol.value + 0.2*self.seg_shape[d][1])*self.org_res_y_textbox.value
                 yshape = ((self.seg_shape[d][2]*(1-0.2)) * self.nrow.value + 0.2*self.seg_shape[d][2])*self.org_res_x_textbox.value
                 if d not in self.raw_stitched['Manual']:
-                    center, _, _, nis, nis_label = self.raw_stitched['N/A'][d]
+                    center, _, _, nis, nis_label = self.raw[d]
                     ct_z = center[:, 0].clone().long()
                     nis_z = (nis[:, 0] + nis[:, 3]) / 2
                     new_nis = []
@@ -542,7 +546,7 @@ class BrainmapQWidget(QWidget):
         self.image_layer_bbox[l.name] = self.get_image_layer_bbox(self.brainmap_layers[self.brainmap_layernames.index(l.name)])
                 
     def run_fusion(self):
-        if self.stitchtype_dropdown.current_choice in ['Coarse', 'N/A']: 
+        if self.stitchtype_dropdown.current_choice in ['Coarse']: 
             print(f'Not support [{self.stitchtype_dropdown.current_choice}] stitch type')
             return 
         stack_nis = {k: self.raw[k][-2].detach().cpu() for k in self.raw}
@@ -820,6 +824,7 @@ def nms_bbox(bbox_tgt, bbox_mov, iou_threshold=0.1, tile_tgt_center=None, tile_m
     area_tgt = box_area(bbox_tgt, D)
     area_mov = box_area(bbox_mov, D)
     iou, index = box_iou(bbox_tgt, bbox_mov, D, area1=area_tgt, area2=area_mov)
+    if iou is None: return None, None
     ## scatter max among each of mov bbox (use this)
     max_iou, argmax = scatter_max(iou, index[1])
     valid = torch.where(max_iou>0)[0]
@@ -882,7 +887,7 @@ def box_iou(boxes1, boxes2, D=2, area1=None, area2=None):
         inter.append(wh.cumprod(-1)[..., -1]) # [N*M]
         ind1 = ind1 + i
         index.append(torch.stack([ind1, ind2])) # [2, N*M]
-    
+    if len(inter) == 0: return None, None
     inter = torch.cat(inter)
     index = torch.cat(index, 1)
     union = area1[index[0]] + area2[index[1]] - inter
