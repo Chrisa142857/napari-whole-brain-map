@@ -86,6 +86,7 @@ class BrainmapQWidget(QWidget):
         self.org_res_y_textbox = widgets.FloatText(value=0.75, name='Orgin res (y)')
         self.org_res_z_textbox = widgets.FloatText(value=4.0, name='Orgin res (z)')
         self.map_res_textbox = widgets.FloatText(value=25, name='Map res (um/vx)')
+        self.device = widgets.Text(value='cuda:0', name='Device')
         self.maptype_dropdown = widgets.Dropdown(choices=['cell count', 'avg volume'], name='Map type', allow_multiple=False)
         
         self.map_config_widgets_basic = [widgets.HBox(widgets=[
@@ -93,7 +94,8 @@ class BrainmapQWidget(QWidget):
             self.org_res_y_textbox,
             self.org_res_z_textbox,]),widgets.HBox(widgets=[
             self.map_res_textbox,
-            self.maptype_dropdown,])
+            self.maptype_dropdown,
+            self.device])
         ]
         
         # self.all_widgets.extend(self.map_config_widgets_basic)
@@ -165,7 +167,7 @@ class BrainmapQWidget(QWidget):
         self.brainmap_layers = []
         self.brainmap_layernames = []
         self.fused_layers = {}
-        self.device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+        # self.device.value = 'cuda:1' if torch.cuda.is_available() else 'cpu'
         self.brainmap_overlap_mask = {}
         self.brainmap_cache = {}
         self.doubled_label = {}
@@ -178,60 +180,99 @@ class BrainmapQWidget(QWidget):
         stitch_path = '/'.join(self.cprof_root.split('/')[:-1]) + '/' + self.btag
         stitch_path = stitch_path.replace('results', 'stitch_by_ptreg').replace('P4/', '')
         overlap_r = 0.4#self.overlap.value
+        org_overlap_r = 0.2
         ij_list = [[i, j] for i in range(self.ncol.value) for j in range(self.nrow.value)]
         zdepth = max([self.seg_shape[d][0] for d in self.seg_shape])
         ratio = [s/self.map_res_textbox.value for s in [self.org_res_z_textbox.value, self.org_res_y_textbox.value, self.org_res_x_textbox.value]]
         trans_slice_bbox = {d: [None for _ in range(zdepth)] for d in self.seg_shape}
+        self.cache_tform = {}
         for di, d in enumerate(self.seg_shape):
             seg_shape = self.seg_shape[d]
             tform_xy_max = [0.05*seg_shape[1], 0.05*seg_shape[2]]
             i, j = ij_list[di]
             k = f'{i}-{j}'
             tile_lt_x, tile_lt_y = i*seg_shape[1]*(1-overlap_r), j*seg_shape[2]*(1-overlap_r)
+            org_tile_lt_x, org_tile_lt_y = i*seg_shape[1]*(1-org_overlap_r), j*seg_shape[2]*(1-org_overlap_r)
             if self.stitchtype_dropdown.current_choice == 'N/A':
                 if 'N/A' not in self.raw_stitched: self.raw_stitched['N/A'] = {}
                 if d not in self.raw_stitched['N/A']: self.raw_stitched['N/A'][d] = self.raw[d]
                 tz = 0
-
+                self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_x]
+                    
             if self.stitchtype_dropdown.current_choice in ['Coarse', 'Refine']:
                 tform_stack_coarse = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_coarse.json', 'r', encoding='utf-8'))
                 tz, tx, ty = tform_stack_coarse[k]
                 tile_lt_x = tile_lt_x + tx
                 tile_lt_y = tile_lt_y + ty
+                org_tile_lt_x = org_tile_lt_x + tx
+                org_tile_lt_y = org_tile_lt_y + ty
                 if 'Coarse' not in self.raw_stitched: self.raw_stitched['Coarse'] = {}
                 if d not in self.raw_stitched['Coarse']: self.raw_stitched['Coarse'][d] = self.raw[d]
+                self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_y]
             
-                # if self.stitchtype_dropdown.current_choice == 'Refine':
-                #     if 'Refine' not in self.raw_stitched: self.raw_stitched['Refine'] = {}
-                #     if d in self.raw_stitched['Refine']: continue
-                #     if os.path.exists(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine.json'):
-                #         tform_stack_refine = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine.json', 'r', encoding='utf-8'))
-                #     if os.path.exists(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine_ptreg.json'):
-                #         tform_stack_refine = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine_ptreg.json', 'r', encoding='utf-8'))
-                #     center = self.raw_stitched['Coarse'][d][0].clone()
-                #     ct_z = (center[:, 0].clone() + tz).long()
-                #     pre_refine_lt = None
-                #     for zi in range(len(tform_stack_refine)):
-                #         ct_zmask = torch.where(ct_z == zi)[0]
-                #         if len(ct_zmask) == 0: continue
-                #         if k in tform_stack_refine[zi]:
-                #             tx, ty = tform_stack_refine[zi][k]
-                #             if (abs(tx) > tform_xy_max[0] or abs(ty) > tform_xy_max[1]):
-                #                 if pre_refine_lt is not None:
-                #                     tx, ty = pre_refine_lt
-                #                 else:
-                #                     for zii in range(zi, len(tform_stack_refine)):
-                #                         tx, ty = tform_stack_refine[zii][k]
-                #                         if abs(tx) <= tform_xy_max[0] and abs(ty) <= tform_xy_max[1]:
-                #                             break
-                #             else:
-                #                 tx, ty = tform_stack_refine[zi][k]
-                #         else:
-                #             tx, ty = 0, 0
-                #         pre_refine_lt = [tx, ty]
-                #         center[ct_zmask, 1] = center[ct_zmask, 1] + tx
-                #         center[ct_zmask, 2] = center[ct_zmask, 2] + ty
-                #     self.raw_stitched['Refine'][d] = [center, self.raw_stitched['Coarse'][d][1], self.raw_stitched['Coarse'][d][2]]
+                if self.stitchtype_dropdown.current_choice == 'Refine':
+                    if 'Refine' not in self.raw_stitched: self.raw_stitched['Refine'] = {}
+                    if d in self.raw_stitched['Refine']: continue
+                    if os.path.exists(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine.json'):
+                        tform_stack_refine = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine.json', 'r', encoding='utf-8'))
+                    if os.path.exists(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine_ptreg.json'):
+                        tform_stack_ptreg = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine_ptreg.json', 'r', encoding='utf-8'))
+                        print(datetime.now(), "Loaded tform of coarse, refine and pt-reg", len(tform_stack_ptreg), [tform_stack_ptreg[zi].keys() for zi in range(len(tform_stack_ptreg)) if len(tform_stack_ptreg[zi].keys()) > 0][-1])
+                    else:
+                        tform_stack_ptreg = None
+                        print(datetime.now(), "Loaded tform of coarse, refine")
+                    # center = self.raw_stitched['Coarse'][d][0].clone()
+                    center, _, _, nis, nis_label = self.raw_stitched['Coarse'][d]
+                    ct_z = (center[:, 0].clone() + tz).long()
+                    nis_z = (((nis[:, 0] + nis[:, 3]) / 2).clone() + tz).long()
+                    new_nis = []
+                    new_nis_label = []
+                    pre_refine_lt = None
+                    for zi in range(len(tform_stack_refine)):
+                        ct_zmask = torch.where(ct_z == zi)[0]
+                        if k in tform_stack_refine[zi]:
+                            _tx, _ty = tform_stack_refine[zi][k]
+                            if (abs(_tx) > tform_xy_max[0] or abs(_ty) > tform_xy_max[1]):
+                                if pre_refine_lt is not None:
+                                    _tx, _ty = pre_refine_lt
+                                else:
+                                    for zii in range(zi, len(tform_stack_refine)):
+                                        if k not in tform_stack_refine[zii]: continue
+                                        _tx, _ty = tform_stack_refine[zii][k]
+                                        if abs(_tx) <= tform_xy_max[0] and abs(_ty) <= tform_xy_max[1]:
+                                            break
+                            else:
+                                _tx, _ty = tform_stack_refine[zi][k]
+                            
+                            if tform_stack_ptreg is not None:
+                                if k in tform_stack_ptreg[zi]:
+                                    tx = _tx + tform_stack_ptreg[zi][k][0]
+                                    ty = _ty + tform_stack_ptreg[zi][k][1]
+                            else:
+                                tx, ty = _tx, _ty
+                        else:
+                            _tx, _ty = 0, 0
+                            tx, ty = 0, 0
+
+                        self.cache_tform[d] = [min(org_tile_lt_x + tx, self.cache_tform[d][0]), min(org_tile_lt_y + ty, self.cache_tform[d][1])]
+
+                        if len(ct_zmask) != 0: 
+                            pre_refine_lt = [_tx, _ty]
+                            center[ct_zmask, 1] = center[ct_zmask, 1] + tx
+                            center[ct_zmask, 2] = center[ct_zmask, 2] + ty
+
+                        nis_zmask = torch.where(nis_z == zi)[0]
+                        if len(nis_zmask) > 0:
+                            # print("before trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0])
+                            nis[nis_zmask, 1::3] = nis[nis_zmask, 1::3] + org_tile_lt_x + tx
+                            nis[nis_zmask, 2::3] = nis[nis_zmask, 2::3] + org_tile_lt_y + ty
+                            # print("after trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0], [minz, miny, minx])
+                            new_nis.append(nis[nis_zmask])
+                            new_nis_label.append(nis_label[nis_zmask])
+                    
+                    new_nis = torch.cat(new_nis)
+                    new_nis_label = torch.cat(new_nis_label)
+                    self.raw_stitched['Refine'][d] = [center, self.raw_stitched['Coarse'][d][1], self.raw_stitched['Coarse'][d][2], new_nis, new_nis_label]
 
             if self.stitchtype_dropdown.current_choice == 'Manual':
                 if 'Manual' not in self.raw_stitched: self.raw_stitched['Manual'] = {}
@@ -318,52 +359,6 @@ class BrainmapQWidget(QWidget):
             self.brainmap_layers[self.brainmap_layernames.index(d)].translate[-3:] = [tz, tile_lt_x, tile_lt_y]
             self.brainmap_layers[self.brainmap_layernames.index(d)].refresh()
 
-        for z in range(np.round(zdepth * ratio[0]).astype(np.int32)):
-            bbox = np.array([trans_slice_bbox[d][int(z/ratio[0])] for d in self.seg_shape if trans_slice_bbox[d][int(z/ratio[0])] is not None])
-            if len(bbox) == 0: continue
-            lnames = [d for d in self.seg_shape.keys() if trans_slice_bbox[d][int(z/ratio[0])] is not None]
-            top_left = np.maximum(bbox[:, None, :2], bbox[None, :, :2]) # N x 1 x 2, 1 x N x 2 -> N x N x 2
-            bottom_right = np.minimum(bbox[:, None, 2:], bbox[None, :, 2:])
-            boxw, boxh = bbox[:, 2] - bbox[:, 0], bbox[:, 3] - bbox[:, 1]
-            boxw, boxh = np.round(boxw / self.map_res_textbox.value).astype(np.int32), np.round(boxh / self.map_res_textbox.value).astype(np.int32)
-            overlap = (bottom_right > top_left).all(-1)
-            for i in range(len(overlap)):
-                lname = lnames[i]
-                if lname not in self.brainmap_overlap_mask:
-                    self.brainmap_overlap_mask[lname] = []
-                overlap[i, i] = False
-                overlap_index = np.where(overlap[i])[0]
-                for oi in overlap_index:
-                    tl = np.round((top_left[i, oi] - bbox[i][:2])  / self.map_res_textbox.value).astype(np.int32) 
-                    br = np.round((bottom_right[i, oi] - bbox[i][:2]) / self.map_res_textbox.value).astype(np.int32) 
-                    data = self.brainmap_cache[lname]
-                    if br[0] - tl[0] > br[1] - tl[1]: # long side
-                        if (br[1] - tl[1]) / (br[0] - tl[0]) <= 0.5: # not corner
-                            tl[0] = 0
-                            br[0] = data.shape[1]
-                        if tl[1] < boxh[i] - br[1]: # top side
-                            tl[1] = 0
-                        else:
-                            br[1] = data.shape[2]
-                    else:
-                        if (br[0] - tl[0]) / (br[1] - tl[1]) <= 0.5: # not corner
-                            tl[1] = 0
-                            br[1] = data.shape[2]
-                        if tl[0] < boxw[i] - br[0]: # top side
-                            tl[0] = 0
-                            br[0] = br[0] + 1
-                        else:
-                            br[0] = data.shape[1]
-                    box2d = np.array([z, tl[0], tl[1], z + 1, br[0], br[1]])
-                    box2d = box2d.astype(np.int32)
-                    if len(self.brainmap_overlap_mask[lname]) > 0:
-                        if (box2d == np.stack(self.brainmap_overlap_mask[lname])).all(-1).any():
-                            continue
-                    self.brainmap_overlap_mask[lname].append(box2d)
-        
-        # for k in self.brainmap_overlap_mask:
-        #     self.brainmap_overlap_mask[k] = np.stack(self.brainmap_overlap_mask[k])
-
     def update_select_status(self):
         status = []
         for update_d in self.tile_selection.choices:
@@ -385,6 +380,7 @@ class BrainmapQWidget(QWidget):
         self.tile_list = sorted(cprof_tile_name)
         self.tile_selection.choices = self.tile_list
         self.update_select_status()
+        self.button_select_list.text = f'Selected {self.btag}'
 
 
     def load_cell_profile_raw(self):
@@ -420,13 +416,13 @@ class BrainmapQWidget(QWidget):
                     
                 if len(_bbox) == 0: continue
                 self.seg_shape[d] = [int(zdepth * zratio), seg_meta[1].item(), seg_meta[2].item()]
-                vol = torch.cat(_vol).to(self.device)
-                bbox = torch.cat(_bbox).to(self.device)
-                label = torch.cat(_label).to(self.device)
+                vol = torch.cat(_vol).to(self.device.value)
+                bbox = torch.cat(_bbox).to(self.device.value)
+                label = torch.cat(_label).to(self.device.value)
                 pt = (bbox[:, :3] + bbox[:, 3:]) / 2
                 zstitch_remap_fn = f"{cprof_d}/{self.btag}_remap.zip"
                 if os.path.exists(zstitch_remap_fn):
-                    zstitch_remap = torch.load(zstitch_remap_fn).to(self.device)
+                    zstitch_remap = torch.load(zstitch_remap_fn).to(self.device.value)
                     self.zstitch_remap[d] = zstitch_remap
                     print("before remove z-stitched pt", pt.shape, label.shape)
                     pt, pt_label, vol = do_zstitch(zstitch_remap, pt, label, vol=vol)
@@ -486,9 +482,13 @@ class BrainmapQWidget(QWidget):
 
     def get_brainmap(self, center, vol=None, dshape=None):
         ratio = [s/self.map_res_textbox.value for s in [self.org_res_z_textbox.value, self.org_res_y_textbox.value, self.org_res_x_textbox.value]]
-        center = center.clone().to(self.device)
+        center = center.clone().to(self.device.value)
+        outlier_mask = (center<0).any(-1)
+        # print(center.shape, torch.where(outlier_mask)[0].shape)
+        # center = center[outlier_mask]
         if vol is not None:
-            vol = vol.float().to(self.device)
+            vol = vol.clone().float().to(self.device.value)
+            # vol = vol[outlier_mask]
         center[:,0] = center[:,0] * ratio[0]
         center[:,1] = center[:,1] * ratio[1]
         center[:,2] = center[:,2] * ratio[2]
@@ -497,15 +497,15 @@ class BrainmapQWidget(QWidget):
         # outbound_mask = torch.logical_or(center[:, 0].round() > dshape[0]-1, center[:, 1].round() > dshape[1]-1)
         # outbound_mask = torch.logical_or(outbound_mask, center[:, 2].round() > dshape[2]-1)
         # center = center[torch.logical_not(outbound_mask)]
-        z = center[:, 0].clip(min=0)
-        y = center[:, 1].clip(min=0)
-        x = center[:, 2].clip(min=0)
+        z = center[:, 0]#.clip(min=0)
+        y = center[:, 1]#.clip(min=0)
+        x = center[:, 2]#.clip(min=0)
         # print(center.shape, z, x, y)
-        loc = torch.arange(dshape[0]*dshape[1]*dshape[2]).view(dshape[0], dshape[1], dshape[2]).to(self.device) 
+        loc = torch.arange(dshape[0]*dshape[1]*dshape[2]).view(dshape[0], dshape[1], dshape[2]).to(self.device.value) 
         loc = loc[(z.round().long(), y.round().long(), x.round().long())] # all nis location in the downsample space
         loc_count = loc.bincount() 
         loc_count = loc_count[loc_count!=0] 
-        atlas_loc = loc.unique().to(self.device) # unique location in the downsample space
+        atlas_loc = loc.unique().to(self.device.value) # unique location in the downsample space
         ## volume avg & local intensity
         vol_avg = None
         if self.maptype_dropdown.current_choice == 'avg volume':
@@ -518,7 +518,7 @@ class BrainmapQWidget(QWidget):
             loc_fg = loc_vol!=-1
             loc_num = loc_fg.sum(1)
             loc_vol[loc_vol==-1] = 0
-            vol_avg = torch.zeros(dshape[0]*dshape[1]*dshape[2]).float()#.to(self.device)
+            vol_avg = torch.zeros(dshape[0]*dshape[1]*dshape[2]).float()#.to(self.device.value)
             vol_avg[atlas_loc] = (loc_vol.sum(1) / loc_num).cpu().float()
             # for loci in tqdm(atlas_loc, desc="Collect NIS property in local cube"): 
             #     where_loc = torch.where(loc==loci)[0]
@@ -527,7 +527,7 @@ class BrainmapQWidget(QWidget):
             return vol_avg
         ## density map
         elif self.maptype_dropdown.current_choice == 'cell count':
-            density = torch.zeros(dshape[0]*dshape[1]*dshape[2], dtype=torch.float64).to(self.device)
+            density = torch.zeros(dshape[0]*dshape[1]*dshape[2], dtype=torch.float64).to(self.device.value)
             density[atlas_loc] = loc_count.double() #/ center.shape[0]
             density = density.view(dshape[0], dshape[1], dshape[2]).cpu()
             return density
@@ -541,10 +541,13 @@ class BrainmapQWidget(QWidget):
         self.image_layer_bbox[l.name] = self.get_image_layer_bbox(self.brainmap_layers[self.brainmap_layernames.index(l.name)])
                 
     def run_fusion(self):
+        if self.stitchtype_dropdown.current_choice in ['Coarse', 'N/A']: 
+            print(f'Not support [{self.stitchtype_dropdown.current_choice}] stitch type')
+            return 
         stack_nis = {k: self.raw[k][-2].detach().cpu() for k in self.raw}
         stack_label = {k: self.raw[k][-1].detach().cpu() for k in self.raw}
         tile_center = {k: [self.seg_shape[k][1]//2, self.seg_shape[k][2]//2] for k in self.image_layer_bbox}
-        self.doubled_label = nms_undouble_cell(stack_nis, stack_label, tile_center, self.seg_shape, tile_wh=self.seg_shape, tile_lt_loc=self.cache_tform, overlap_r=0.2, btag=self.btag, device=self.device, save_path='./tmp')
+        self.doubled_label = nms_undouble_cell(stack_nis, stack_label, tile_center, self.seg_shape, tile_wh=self.seg_shape, tile_lt_loc=self.cache_tform, overlap_r=0.2, btag=self.btag, device=self.device.value, save_path='./tmp')
         lrange = 1000
         undoubled_center = []
         undoubled_label = []
@@ -553,17 +556,17 @@ class BrainmapQWidget(QWidget):
         #########################
             # pt, label, vol = self.raw[k][:3]
         #########################
-            pt = stack_nis[k].clone().to(self.device)
+            pt = stack_nis[k].clone().to(self.device.value)
             pt = (pt[:, :3] + pt[:, 3:]) / 2
-            label = stack_label[k].clone().to(self.device)
+            label = stack_label[k].clone().to(self.device.value)
         #########################
             print("before remove doubled pt", self.raw[k][-2].shape, label.shape)
             keep_ind = []
             for labeli in range(0, len(label), lrange):
                 label_batch = label[labeli:labeli+lrange]
-                label2rm = label_batch[:, None] == self.doubled_label[k][None, :].to(self.device)
+                label2rm = label_batch[:, None] == self.doubled_label[k][None, :].to(self.device.value)
                 do_rm = label2rm.any(1)
-                keep_ind.append(torch.arange(labeli, labeli+len(label_batch), device=self.device)[torch.logical_not(do_rm)])
+                keep_ind.append(torch.arange(labeli, labeli+len(label_batch), device=self.device.value)[torch.logical_not(do_rm)])
             if len(label) > 0:
                 keep_ind = torch.cat(keep_ind)
                 pt = pt[keep_ind]
@@ -679,9 +682,9 @@ def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, o
     nms_computed = []
     ncol = 4
     nrow = 5
-    bbox_area_wh = {k: stack_nis_bbox[k][:, 4:6].max(0)[0] - stack_nis_bbox[k][:, 1:3].min(0)[0] for k in stack_nis_bbox}
+    bbox_area_wh = {k: stack_nis_bbox[k][:, 4:6].max(0)[0] - stack_nis_bbox[k][:, 1:3].min(0)[0] + 1 for k in stack_nis_bbox}
     max_tile_wh = {k: [max(tile_wh[k][1], bbox_area_wh[k][0]), max(tile_wh[k][2], bbox_area_wh[k][1])] for k in stack_nis_bbox}
-    # tile_lt_loc = {k: [tile_lt_loc[k][0] - max_tile_wh[k][0]*0.1, tile_lt_loc[k][1] - max_tile_wh[k][1]*0.1] for k in stack_nis_bbox}
+    tile_lt_loc = {k: [min(tile_lt_loc[k][0], stack_nis_bbox[k][:, 1].min(0)[0]), min(tile_lt_loc[k][1], stack_nis_bbox[k][:, 2].min(0)[0])] for k in stack_nis_bbox}
     print(max_tile_wh)
     print(tile_lt_loc)
     for k in stack_nis_bbox:
@@ -829,7 +832,8 @@ def nms_bbox(bbox_tgt, bbox_mov, iou_threshold=0.1, tile_tgt_center=None, tile_m
     threshold_e = (threshold_e - threshold_e.min()) / (threshold_e.max()- threshold_e.min())
     threshold_e = threshold_e.clip(min=0.05, max=0.5)
     iou_threshold = iou_threshold * threshold_e
-    big_iou = max_iou[valid] >= iou_threshold
+    big_iou = torch.where(max_iou[valid] >= iou_threshold)[0]
+    if len(big_iou) == 0: return None, None
     remove_ind_mov = index[1, argmax[valid][big_iou]]
     remove_ind_tgt = index[0, argmax[valid][big_iou]]
     ## remove small area of tgt or mov bbox
