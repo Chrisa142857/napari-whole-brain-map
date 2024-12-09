@@ -126,6 +126,7 @@ class BrainmapQWidget(QWidget):
         self.nrow = widgets.SpinBox(
             value=5, min=1, max=100, label='# of rows:') 
         self.stitchtype_dropdown = widgets.Dropdown(choices=['N/A', 'Coarse', 'Refine', 'Manual'], name='Stitch type', allow_multiple=False)
+        self.zstitchtype = widgets.Dropdown(choices=['Avg', 'Org'], name='Z-type', allow_multiple=False)
         self.button_arrange_tiles = widgets.Button(text='Arrange tiles')
         # organize widgets        
         self.mosaic_widgets = widgets.VBox(widgets=[
@@ -134,12 +135,25 @@ class BrainmapQWidget(QWidget):
             self.ncol, 
             self.nrow,]), widgets.HBox(widgets=[
             self.stitchtype_dropdown,
+            self.zstitchtype,
             self.button_arrange_tiles,])
         ])
         self.all_widgets.append(self.mosaic_widgets)
+        self.manual_stitch_path = widgets.Button(text='N/A')
+        self.manual_stitch_selection = widgets.HBox(widgets=[
+            widgets.Label(value='Select path to manual stitch'),
+            self.manual_stitch_path
+        ])
+        self.all_widgets.append(self.manual_stitch_selection)
 
-        self.button_fuse = widgets.Button(text='Fuse brain map as whole',
+        self.button_fuse = widgets.Button(text='Undouble and Fuse',
             tooltip='Fuse brain map as whole.')
+        self.undouble_path = widgets.Button(text=f'{os.getcwd()}/tmp/doubled_NIS_label')
+        self.undouble_to_fuse = widgets.HBox(widgets=[
+            widgets.Label(value='Select path to doubled cell id'),
+            self.undouble_path,
+            self.button_fuse
+        ])
         self.all_widgets.append(self.button_fuse)
 
         self.container = QWidget()
@@ -154,6 +168,8 @@ class BrainmapQWidget(QWidget):
         self.container.setMinimumWidth = 5
         self.layout().addWidget(self.container)
 
+        self.undouble_path.clicked.connect(self.select_undouble_path)
+        self.manual_stitch_path.clicked.connect(self.select_manual_path)
         self.button_load_cprof.clicked.connect(self.load_cell_profile_raw)
         self.button_select_list.clicked.connect(self.load_cell_profile_name)
         self.button_gen_brainmap.clicked.connect(self.whole_brainmap)
@@ -173,38 +189,45 @@ class BrainmapQWidget(QWidget):
         self.doubled_label = {}
         self.cache_tform = {}
 
-    def arrange_brainmap_layer(self):
-        xmlfile_root = f'/cajal/Felix/Lightsheet/stitching/Manual_aligned_{self.btag}'
-        if self.btag == 'L57D855P5':
-            xmlfile_root = '/cajal/ACMUSERS/ziquanw/Lightsheet/imaris_stitch/Manual_aligned_L57D855P5'
+    def arrange_brainmap_layer(self, stitch_type=None, ncol=None, nrow=None):
+        if stitch_type is None:
+            stitch_type = self.stitchtype_dropdown.current_choice
+        if ncol is None:
+            ncol = self.ncol.value
+        if nrow is None:
+            nrow = self.nrow.value
+
         stitch_path = '/'.join(self.cprof_root.split('/')[:-1]) + '/' + self.btag
         stitch_path = stitch_path.replace('results', 'stitch_by_ptreg').replace('P4/', '')
         overlap_r = 0.4#self.overlap.value
         org_overlap_r = 0.2
-        ij_list = [[i, j] for i in range(self.ncol.value) for j in range(self.nrow.value)]
-        zdepth = max([self.seg_shape[d][0] for d in self.seg_shape])
-        ratio = [s/self.map_res_textbox.value for s in [self.org_res_z_textbox.value, self.org_res_y_textbox.value, self.org_res_x_textbox.value]]
-        trans_slice_bbox = {d: [None for _ in range(zdepth)] for d in self.seg_shape}
+        ij_list = [[i, j] for i in range(ncol) for j in range(nrow)]
+        # zdepth = max([self.seg_shape[d][0] for d in self.seg_shape])
+        # ratio = [s/self.map_res_textbox.value for s in [self.org_res_z_textbox.value, self.org_res_y_textbox.value, self.org_res_x_textbox.value]]
+        # trans_slice_bbox = {d: [None for _ in range(zdepth)] for d in self.seg_shape}
         self.cache_tform = {}
-        for di, d in enumerate(self.seg_shape):
+        # for di, d in enumerate(self.seg_shape):
+        for i, j in ij_list:
+            d = f'UltraII[{i:02d} x {j:02d}]'
+            if d not in self.seg_shape: continue
             seg_shape = self.seg_shape[d]
             tform_xy_max = [0.05*seg_shape[1], 0.05*seg_shape[2]]
-            i, j = ij_list[di]
+            # i, j = ij_list[di]
             k = f'{i}-{j}'
             tile_lt_x, tile_lt_y = i*seg_shape[1]*(1-overlap_r), j*seg_shape[2]*(1-overlap_r)
             org_tile_lt_x, org_tile_lt_y = i*seg_shape[1]*(1-org_overlap_r), j*seg_shape[2]*(1-org_overlap_r)
-            if self.stitchtype_dropdown.current_choice == 'N/A':
+            if stitch_type == 'N/A':
                 if 'N/A' not in self.raw_stitched: self.raw_stitched['N/A'] = {}
                 if d not in self.raw_stitched['N/A']: self.raw_stitched['N/A'][d] = self.raw[d]
                 tz = 0
-                self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_x]
+                self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_y]
                 _, _, _, nis, _ = self.raw[d]
                 new_nis = nis.clone()
-                new_nis[:, 1::3] = nis[:, 1::3] + org_tile_lt_x
-                new_nis[:, 2::3] = nis[:, 2::3] + org_tile_lt_y
+                new_nis[:, 1::3] = new_nis[:, 1::3] + org_tile_lt_x
+                new_nis[:, 2::3] = new_nis[:, 2::3] + org_tile_lt_y
                 self.raw_stitched['N/A'][d] = [self.raw_stitched['N/A'][d][0], self.raw_stitched['N/A'][d][1], self.raw_stitched['N/A'][d][2], new_nis, self.raw_stitched['N/A'][d][-1]]
                     
-            if self.stitchtype_dropdown.current_choice in ['Coarse', 'Refine']:
+            if stitch_type in ['Coarse', 'Refine']:
                 tform_stack_coarse = json.load(open(f'{stitch_path}/NIS_tranform/{self.btag}_tform_coarse.json', 'r', encoding='utf-8'))
                 tz, tx, ty = tform_stack_coarse[k]
                 tile_lt_x = tile_lt_x + tx
@@ -214,7 +237,7 @@ class BrainmapQWidget(QWidget):
                 if 'Coarse' not in self.raw_stitched: self.raw_stitched['Coarse'] = {}
                 if d not in self.raw_stitched['Coarse']: self.raw_stitched['Coarse'][d] = self.raw[d]
                 self.cache_tform[d] = [org_tile_lt_x, org_tile_lt_y]
-                if self.stitchtype_dropdown.current_choice == 'Refine':
+                if stitch_type == 'Refine':
                     if 'Refine' not in self.raw_stitched: self.raw_stitched['Refine'] = {}
                     if d in self.raw_stitched['Refine']: continue
                     if os.path.exists(f'{stitch_path}/NIS_tranform/{self.btag}_tform_refine.json'):
@@ -278,12 +301,12 @@ class BrainmapQWidget(QWidget):
                     new_nis_label = torch.cat(new_nis_label)
                     self.raw_stitched['Refine'][d] = [center, self.raw_stitched['Coarse'][d][1], self.raw_stitched['Coarse'][d][2], new_nis, new_nis_label]
 
-            if self.stitchtype_dropdown.current_choice == 'Manual':
+            if stitch_type == 'Manual':
                 if 'Manual' not in self.raw_stitched: self.raw_stitched['Manual'] = {}
                 if 'N/A' not in self.raw_stitched: self.raw_stitched['N/A'] = {}
                 if d not in self.raw_stitched['N/A']: self.raw_stitched['N/A'][d] = self.raw[d]
-                xshape = ((self.seg_shape[d][1]*(1-0.2)) * self.ncol.value + 0.2*self.seg_shape[d][1])*self.org_res_y_textbox.value
-                yshape = ((self.seg_shape[d][2]*(1-0.2)) * self.nrow.value + 0.2*self.seg_shape[d][2])*self.org_res_x_textbox.value
+                xshape = ((self.seg_shape[d][1]*(1-org_overlap_r)) * ncol + org_overlap_r*self.seg_shape[d][1])*self.org_res_y_textbox.value
+                yshape = ((self.seg_shape[d][2]*(1-org_overlap_r)) * nrow + org_overlap_r*self.seg_shape[d][2])*self.org_res_x_textbox.value
                 if d not in self.raw_stitched['Manual']:
                     center, _, _, nis, nis_label = self.raw[d]
                     ct_z = center[:, 0].clone().long()
@@ -292,6 +315,10 @@ class BrainmapQWidget(QWidget):
                     new_nis_label = []
                 
                 tz = []
+                xmlfile_root = self.manual_stitch_path.text
+                # xmlfile_root = f'/cajal/Felix/Lightsheet/stitching/Manual_aligned_{self.btag}'
+                # if self.btag == 'L57D855P5':
+                #     xmlfile_root = '/cajal/ACMUSERS/ziquanw/Lightsheet/imaris_stitch/Manual_aligned_L57D855P5'
                 for fn in os.listdir(xmlfile_root):
                     if not fn.endswith('.xml'): continue
                     xmlfile = f'{xmlfile_root}/{fn}'
@@ -326,29 +353,34 @@ class BrainmapQWidget(QWidget):
                                 else:
                                     self.cache_tform[d] = [min(miny/self.org_res_y_textbox.value, self.cache_tform[d][0]), min(minx/self.org_res_x_textbox.value, self.cache_tform[d][1])]
                                 if tile_lt_x is None:
-                                    # tz, tile_lt_x, tile_lt_y = minz, miny, minx
-                                    tile_lt_x, tile_lt_y = miny, minx
+                                    if self.zstitchtype.current_choice == 'Org':
+                                        tz, tile_lt_x, tile_lt_y = minz, miny, minx
+                                    elif self.zstitchtype.current_choice == 'Avg':
+                                        tile_lt_x, tile_lt_y = miny, minx
                                 elif d not in self.raw_stitched['Manual']:
                                     ct_zmask = torch.where(torch.logical_and(ct_z >= zmin, ct_z < zmax))[0]
                                     if len(ct_zmask) > 0:
-                                        # center[ct_zmask, 0] = center[ct_zmask, 0] + (minz-tz)
+                                        if self.zstitchtype.current_choice == 'Org':
+                                            center[ct_zmask, 0] = center[ct_zmask, 0] + (minz-tz)
                                         center[ct_zmask, 1] = center[ct_zmask, 1] + (miny-tile_lt_x)
                                         center[ct_zmask, 2] = center[ct_zmask, 2] + (minx-tile_lt_y)
                                 if d not in self.raw_stitched['Manual']:
                                     nis_zmask = torch.where(torch.logical_and(nis_z >= zmin, nis_z < zmax))[0]
                                     if len(nis_zmask) > 0:
                                         # print("before trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0])
-                                        # nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + minz/self.org_res_z_textbox.value
-                                        nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + tz/self.org_res_z_textbox.value
+                                        if self.zstitchtype.current_choice == 'Org':
+                                            nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + minz/self.org_res_z_textbox.value
+                                        elif self.zstitchtype.current_choice == 'Avg':
+                                            nis[nis_zmask, 0::3] = nis[nis_zmask, 0::3] + tz/self.org_res_z_textbox.value
                                         nis[nis_zmask, 1::3] = nis[nis_zmask, 1::3] + miny/self.org_res_y_textbox.value
                                         nis[nis_zmask, 2::3] = nis[nis_zmask, 2::3] + minx/self.org_res_x_textbox.value
                                         # print("after trans", nis[nis_zmask].min(0)[0], nis[nis_zmask].max(0)[0], [minz, miny, minx])
                                         new_nis.append(nis[nis_zmask])
                                         new_nis_label.append(nis_label[nis_zmask])
 
-                                for z in range(int(zmin+minz), np.ceil(zmax+minz).astype(np.int32)):
-                                    if z >= 0 and z < len(trans_slice_bbox[d]):
-                                        trans_slice_bbox[d][z] = [miny, minx, miny+seg_shape[1]*self.org_res_y_textbox.value, minx+seg_shape[2]*self.org_res_x_textbox.value]
+                                # for z in range(int(zmin+minz), np.ceil(zmax+minz).astype(np.int32)):
+                                    # if z >= 0 and z < len(trans_slice_bbox[d]):
+                                    #     trans_slice_bbox[d][z] = [miny, minx, miny+seg_shape[1]*self.org_res_y_textbox.value, minx+seg_shape[2]*self.org_res_x_textbox.value]
                                 break
             
                 if d not in self.raw_stitched['Manual']: 
@@ -356,8 +388,8 @@ class BrainmapQWidget(QWidget):
                     new_nis_label = torch.cat(new_nis_label)
                     self.raw_stitched['Manual'][d] = [center, self.raw_stitched['N/A'][d][1], self.raw_stitched['N/A'][d][2], new_nis, new_nis_label]
             
-            if self.stitchtype_dropdown.current_choice in ['Refine', 'Manual']:
-                self.raw[d] = self.raw_stitched[self.stitchtype_dropdown.current_choice][d]
+            if stitch_type in ['N/A', 'Refine', 'Manual']:
+                self.raw[d] = self.raw_stitched[stitch_type][d]
                 self.update_brainmap_layer(d)
                 
             self.brainmap_layers[self.brainmap_layernames.index(d)].translate[-3:] = [tz, tile_lt_x, tile_lt_y]
@@ -373,6 +405,12 @@ class BrainmapQWidget(QWidget):
         self.select_list_status.choices = status
         print(len(self.tile_list), len(self.tile_selection.choices), len(self.select_list_status.choices), len(status))
 
+    def select_undouble_path(self):
+        self.undouble_path.text = str(QFileDialog.getExistingDirectory(self, "Select folder contains [Doubled-Cell-ID].zip"))
+
+    def select_manual_path(self):
+        self.manual_stitch_path.text = str(QFileDialog.getExistingDirectory(self, "Select folder contains [Imaris-Stitcher].xml"))
+
     def load_cell_profile_name(self):
         self.btag_split_key = '_'
         self.btag_split_i = 1
@@ -386,6 +424,7 @@ class BrainmapQWidget(QWidget):
         self.update_select_status()
         self.button_select_list.text = f'Selected {self.btag}'
         self.button_select_list.enabled = False
+        self.manual_stitch_path.text = f'/cajal/Felix/Lightsheet/stitching/Manual_aligned_{self.btag}'
 
 
     def load_cell_profile_raw(self):
@@ -800,7 +839,7 @@ def nms_undouble_cell(stack_nis_bbox, stack_nis_label, tile_center, seg_shape, o
     torch.cuda.empty_cache()
     return rm_label
 
-def nms_bbox(bbox_tgt, bbox_mov, iou_threshold=0.1, tile_tgt_center=None, tile_mov_center=None, seg_shape=None, device=None):
+def nms_bbox(bbox_tgt, bbox_mov, iou_threshold=0.01, tile_tgt_center=None, tile_mov_center=None, seg_shape=None, device=None):
     # remove touching boundary boxes first
     rm_mask_tgt = (bbox_tgt[:, 1] == 0) | (bbox_tgt[:, 1] == seg_shape[0]) | (bbox_tgt[:, 4] == 0) | (bbox_tgt[:, 4] == seg_shape[0]) | \
     (bbox_tgt[:, 2] == 0) | (bbox_tgt[:, 2] == seg_shape[1]) | (bbox_tgt[:, 5] == 0) | (bbox_tgt[:, 5] == seg_shape[1])
